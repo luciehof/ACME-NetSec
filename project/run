@@ -1,6 +1,11 @@
 #!/bin/bash
-DIRECTORY=$(dirname "$0")
-echo "Changing to ${DIRECTORY}"
-cd  "$DIRECTORY" || exit 1
+#DIRECTORY=$(dirname "$0")
+#echo "Changing to ${DIRECTORY}"
+#cd  "$DIRECTORY" || exit 1
+#
+#echo "Run your project here."
 
-echo "Run your project here."
+### SOURCE: https://gitlab.inf.ethz.ch/PRV-PERRIG/netsec-course/netsec-2021-resources/-/blob/master/projects/acme-project-description.md
+
+python3 main.py "$@"
+
