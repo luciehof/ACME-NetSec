@@ -32,6 +32,14 @@ class AcmeClient:
         self.server_certificate_validity = self.get_server_directory()
         if self.server_certificate_validity == 0:
             self.get_new_nonce()
+            self.default_dns()
+
+    def default_dns(self):
+        TTL = 300  # dns periodical record update set to 5min (large upper bound)
+        zone = " " + str(TTL) + " IN A " + self.record_address
+        dns = DNS(zone, self.domains)
+        self.dns_server = DNSServer(dns, self.record_address, port=10053)
+        self.dns_server.start_thread()
 
     def get_server_directory(self) -> int:
         """ Get all URLs corresponding to acme operations (e.g. new account, new nonce) wrt to the acme server url."""
@@ -46,7 +54,6 @@ class AcmeClient:
         self.new_account_url = self.get_url(r_json, "newAccount")
         self.new_order_url = self.get_url(r_json, "newOrder")
         self.rev_cert_url = self.get_url(r_json, "revokeCert")
-        self.key_change_url = self.get_url(r_json, "keyChange")
         return 0
 
     def get_url(self, r_json, key):
@@ -108,6 +115,7 @@ class AcmeClient:
         return token + '.' + base64_encode(h.digest())
 
     def dns_challenge(self):
+        self.dns_server.stop()
         for c in self.challenges:
             key_authorization = self.get_key_authorization(c['token'], self.jwk_dict)
             # making challenge
@@ -131,8 +139,9 @@ class AcmeClient:
             # server polling
             self.polling(c['auth_url'], "")
 
-            # stop dns server
+            # stop dns server for dns challenge, restart default one
             dns_server.stop()
+        self.dns_server.start_thread()
 
     def http_challenge(self):
         """ For all http challenges, make it and validate it."""
@@ -141,11 +150,6 @@ class AcmeClient:
             # making challenge
             http_server = HttpServer(c['token'], key_authorization, self.record_address)
             http_server.start()
-            TTL = 300  # dns periodical record update set to 5min (large upper bound)
-            zone = " " + str(TTL) + " IN A " + self.record_address
-            dns = DNS(zone, self.domains)
-            dns_server = DNSServer(dns, self.record_address, port=10053)
-            dns_server.start_thread()
 
             # validation request
             jose_header = jose.get_header(self.nonce, c['chal_url'], kid=self.kid)
@@ -161,7 +165,6 @@ class AcmeClient:
             # stop dns and http servers
             http_server.terminate()
             http_server.join()
-            dns_server.stop()
 
     def polling(self, url, payload):
         status = ""
@@ -265,9 +268,6 @@ class AcmeClient:
         if self.revoke:
             self.revoke_certificate(self.certificate)
         return self.certificate
-
-    def invalid_certificate(self):
-        return 1
 
     def revoke_certificate(self, certificate):
         cert_der = base64_encode(jose.cert_der(certificate))
