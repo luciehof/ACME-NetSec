@@ -83,3 +83,9 @@ def write_pem_cert(certificate: str):
     with open("certificate.pem", 'w') as f:
         f.write(certificate)
         f.close()
+
+
+def cert_der(certificate):
+    cert_enc = x509.load_pem_x509_certificate(certificate.encode(), default_backend())
+    cert_der = cert_enc.public_bytes(serialization.Encoding.DER)
+    return cert_der

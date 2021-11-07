@@ -23,7 +23,8 @@ class Challenge(enum.Enum):
 
 
 class AcmeClient:
-    def __init__(self, acme_server_url: str, domains: List[str], challenge_type: Challenge, record_address):
+    def __init__(self, acme_server_url: str, domains: List[str], challenge_type: Challenge, record_address, revoke=False):
+        self.revoke = revoke
         self.acme_server_url = acme_server_url
         self.domains = domains
         self.challenge_type = challenge_type
@@ -163,12 +164,16 @@ class AcmeClient:
             dns_server.stop()
 
     def polling(self, url, payload):
-        status = "invalid"
+        status = ""
         while status != "valid":
             jose_header = jose.get_header(self.nonce, url, kid=self.kid)
             jwt = jose.json_web_token(jose_header, payload, self.pk)
             r = requests.post(url=url, headers={"Content-Type": "application/jose+json"}, data=jwt,
                               verify='pebble.minica.pem')
+
+            print("polling jose header: ", jose_header)
+            print("polling jwt: ", jwt)
+            print("polling r: ", r.text)
 
             self.check_code_status(r)
             self.nonce = r.headers.get("Replay-Nonce")
@@ -257,7 +262,18 @@ class AcmeClient:
         self.nonce = r.headers.get("Replay-Nonce")
         self.certificate = r.text
         jose.write_pem_cert(self.certificate)
+        if self.revoke:
+            self.revoke_certificate(self.certificate)
         return self.certificate
 
     def invalid_certificate(self):
         return 1
+
+    def revoke_certificate(self, certificate):
+        cert_der = base64_encode(jose.cert_der(certificate))
+        payload = {"certificate": cert_der}
+        jose_header = jose.get_header(self.nonce, self.rev_cert_url, kid=self.kid)
+        jwt = jose.json_web_token(jose_header, payload, self.pk)
+        r = requests.post(url=self.rev_cert_url, headers={"Content-Type": "application/jose+json"}, data=jwt,
+                          verify='pebble.minica.pem')
+        self.check_code_status(r)

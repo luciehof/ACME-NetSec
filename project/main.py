@@ -10,6 +10,7 @@ CHALLENGE_TYPE = sys.argv[1]
 DOMAINS = []
 DIR_URL = ""
 IPV4_ADDRESS = ""
+REVOKE = False
 
 args = sys.argv[2:]
 for i in range (0, len(args), 2):
@@ -19,6 +20,8 @@ for i in range (0, len(args), 2):
         IPV4_ADDRESS = args[i+1]
     elif args[i] == "--domain":
         DOMAINS.append(args[i+1])
+    elif args[i] == "--revoke":
+        REVOKE = True
 
 assert type(DIR_URL != str)
 print("dir url ", DIR_URL)
@@ -32,7 +35,7 @@ if CHALLENGE_TYPE == 'dns01':
 else:
     challenge_type = Challenge.http
 
-acme_client = AcmeClient(DIR_URL, DOMAINS, challenge_type, IPV4_ADDRESS)
+acme_client = AcmeClient(DIR_URL, DOMAINS, challenge_type, IPV4_ADDRESS, REVOKE)
 print("-----------------------------")
 print("Setting up account with Acme server...")
 server_certificate_validity = acme_client.server_setup()
