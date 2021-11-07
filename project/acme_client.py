@@ -28,12 +28,17 @@ class AcmeClient:
         self.domains = domains
         self.challenge_type = challenge_type
         self.record_address = record_address
-        self.get_server_directory()
-        self.get_new_nonce()
+        self.server_certificate_validity = self.get_server_directory()
+        if self.server_certificate_validity == 0:
+            self.get_new_nonce()
 
-    def get_server_directory(self):
+    def get_server_directory(self) -> int:
         """ Get all URLs corresponding to acme operations (e.g. new account, new nonce) wrt to the acme server url."""
-        r = requests.get(self.acme_server_url, verify='pebble.minica.pem')
+        try:
+            r = requests.get(self.acme_server_url, verify='pebble.minica.pem')
+        except requests.exceptions.SSLError:
+            print("SSLError: certificate verify failed.")
+            return 1
         self.check_code_status(r)
         r_json = r.json()
         self.new_nonce_url = self.get_url(r_json, "newNonce")
@@ -41,6 +46,7 @@ class AcmeClient:
         self.new_order_url = self.get_url(r_json, "newOrder")
         self.rev_cert_url = self.get_url(r_json, "revokeCert")
         self.key_change_url = self.get_url(r_json, "keyChange")
+        return 0
 
     def get_url(self, r_json, key):
 
@@ -62,10 +68,13 @@ class AcmeClient:
         else:
             r.raise_for_status()
 
-    def server_setup(self):
+    def server_setup(self) -> int:
         """Request an account with the ACME server.
         The client generates asymmetric key pair to sign the account
         creation request to prove it controls this request."""
+
+        if self.server_certificate_validity == 1:
+            return 1
 
         # generate asymmetric key pair and get public x,y coordinates
         self.pk = jose.generate_ecdsa_pk()
@@ -85,6 +94,8 @@ class AcmeClient:
         self.check_code_status(r)
         self.kid = r.headers.get("Location")
         self.nonce = r.headers.get("Replay-Nonce")
+
+        return 0
 
     def get_key_authorization(self, token, jwk: dict):
         """For challenge validation, returns keyAuthorization = token || '.' || base64url(Thumbprint(accountKey))"""
@@ -247,3 +258,6 @@ class AcmeClient:
         self.certificate = r.text
         jose.write_pem_cert(self.certificate)
         return self.certificate
+
+    def invalid_certificate(self):
+        return 1
