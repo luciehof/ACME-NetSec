@@ -215,6 +215,7 @@ class AcmeClient:
         r_json = r.json()
         self.authorizations_url = r_json["authorizations"]
         self.finalize_url = r_json["finalize"]
+        self.order_url = r.headers.get("Location")
 
     def finalize_certificate(self):
         """Finalize certificate order after challenge validation by
@@ -230,8 +231,7 @@ class AcmeClient:
 
         self.check_code_status(r)
         self.nonce = r.headers.get("Replay-Nonce")
-        r_json = r.json()
-        r_json = self.polling(r.headers["Location"], "")
+        r_json = self.polling(self.order_url, "")
         self.cert_url = r_json["certificate"]
 
     def download_certificate(self):
