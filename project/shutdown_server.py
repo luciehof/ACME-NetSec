@@ -15,6 +15,6 @@ class ShutdownServer(Process):
         def shutdown():
             print("Shutting down acme application...")
             request.environ.get('werkzeug.server.shutdown')
-            return 0
+            return "Server shutting down..."
         self.app.run(host=self.record_address, port=5003)
 
