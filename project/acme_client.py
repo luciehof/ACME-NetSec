@@ -277,3 +277,4 @@ class AcmeClient:
         r = requests.post(url=self.rev_cert_url, headers={"Content-Type": "application/jose+json"}, data=jwt,
                           verify='pebble.minica.pem')
         self.check_code_status(r)
+        self.nonce = r.headers.get("Replay-Nonce")
