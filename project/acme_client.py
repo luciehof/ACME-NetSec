@@ -56,9 +56,10 @@ class AcmeClient:
         self.challenges = []
         self.pk = None
         self.certificate = None
-        self.dns_server = self.launch_default_dns()
+        self.dns_server = None
         if self.server_certificate_validity == 0:
             self.get_new_nonce()
+            self.dns_server = self.launch_default_dns()
 
     def launch_default_dns(self):
         TTL = 300  # dns periodical record update set to 5min (large upper bound)
