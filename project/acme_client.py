@@ -1,9 +1,6 @@
-import base64
 import enum
 import hashlib
-import json
 import math
-import sys
 import time
 from typing import List
 import requests
@@ -12,9 +9,7 @@ from dnslib.server import DNSServer
 import jose
 from dns import DNS
 from http_challenge import HttpServer
-from jose import base64_encode
-
-from multiprocessing import Process
+from jose import base64_encode, get_key_authorization
 
 
 class Challenge(enum.Enum):
@@ -22,24 +17,60 @@ class Challenge(enum.Enum):
     dns = 2
 
 
+def check_code_status(r):
+    """ Return if HTTP status code is OK, throw an exception otherwise."""
+    if r.status_code == requests.codes.ok:
+        return
+    else:
+        r.raise_for_status()
+
+
+def get_url(r_json, key):
+    try:
+        return r_json[key]
+    except KeyError:
+        print("No " + key + " key found in json.")
+
+
 class AcmeClient:
-    def __init__(self, acme_server_url: str, domains: List[str], challenge_type: Challenge, record_address, revoke=False):
+    def __init__(self, acme_server_url: str, domains: List[str], challenge_type: Challenge, record_address,
+                 revoke=False):
         self.revoke = revoke
         self.acme_server_url = acme_server_url
         self.domains = domains
         self.challenge_type = challenge_type
         self.record_address = record_address
+        self.new_nonce_url = None
+        self.new_account_url = None
+        self.new_order_url = None
+        self.rev_cert_url = None
+        self.authorizations_url = None
+        self.finalize_url = None
+        self.order_url = None
+        self.cert_url = None
         self.server_certificate_validity = self.get_server_directory()
+        self.dns_server = None
+        self.nonce = None
+        self.jwk_dict = None
+        self.kid = None
+        self.default_dns_zone = ""
+        self.challenges = []
+        self.pk = None
+        self.certificate = None
         if self.server_certificate_validity == 0:
             self.get_new_nonce()
-            self.default_dns()
+            self.dns_server = self.launch_default_dns()
 
-    def default_dns(self):
+    def launch_default_dns(self):
         TTL = 300  # dns periodical record update set to 5min (large upper bound)
-        zone = " " + str(TTL) + " IN A " + self.record_address
-        dns = DNS(zone, self.domains)
-        self.dns_server = DNSServer(dns, self.record_address, port=10053)
-        self.dns_server.start_thread()
+        self.default_dns_zone = " " + str(TTL) + " IN A " + self.record_address
+        return self.launch_dns([self.default_dns_zone])
+
+    def launch_dns(self, zones):
+        dns = DNS(zones, self.domains)
+        dns_server = DNSServer(dns, self.record_address, port=10053)
+        dns_server.start_thread()
+        return dns_server
 
     def get_server_directory(self) -> int:
         """ Get all URLs corresponding to acme operations (e.g. new account, new nonce) wrt to the acme server url."""
@@ -48,33 +79,19 @@ class AcmeClient:
         except requests.exceptions.SSLError:
             print("SSLError: certificate verify failed.")
             return 1
-        self.check_code_status(r)
+        check_code_status(r)
         r_json = r.json()
-        self.new_nonce_url = self.get_url(r_json, "newNonce")
-        self.new_account_url = self.get_url(r_json, "newAccount")
-        self.new_order_url = self.get_url(r_json, "newOrder")
-        self.rev_cert_url = self.get_url(r_json, "revokeCert")
+        self.new_nonce_url = get_url(r_json, "newNonce")
+        self.new_account_url = get_url(r_json, "newAccount")
+        self.new_order_url = get_url(r_json, "newOrder")
+        self.rev_cert_url = get_url(r_json, "revokeCert")
         return 0
-
-    def get_url(self, r_json, key):
-
-        try:
-            return r_json[key]
-        except KeyError:
-            print("No " + key + " key found in json.")
 
     def get_new_nonce(self):
         """Get and return new nonce value from ACME server."""
         r = requests.head(self.new_nonce_url, verify='pebble.minica.pem')
-        self.check_code_status(r)
+        check_code_status(r)
         self.nonce = r.headers.get("Replay-Nonce")
-
-    def check_code_status(self, r):
-        """ Return if HTTP status code is OK, throw an exception otherwise."""
-        if r.status_code == requests.codes.ok:
-            return
-        else:
-            r.raise_for_status()
 
     def server_setup(self) -> int:
         """Request an account with the ACME server.
@@ -95,69 +112,56 @@ class AcmeClient:
         # send POST request to server's newAccount URL
         payload = {"termsOfServiceAgreed": True}
         self.jwk_dict = {"crv": 'P-256', "kty": 'EC', "x": str_x, "y": str_y}
-        jose_header = jose.get_header(self.nonce, self.new_account_url, jwk=self.jwk_dict)
-        jwt = jose.json_web_token(jose_header, payload, self.pk)
-        r = requests.post(url=self.new_account_url, headers={"Content-Type": "application/jose+json"}, data=jwt,
-                          verify='pebble.minica.pem')
-        self.check_code_status(r)
+        r = self.acme_server_post_request(payload, self.new_account_url, jwk=self.jwk_dict)
         self.kid = r.headers.get("Location")
-        self.nonce = r.headers.get("Replay-Nonce")
 
         return 0
 
-    def get_key_authorization(self, token, jwk: dict):
-        """For challenge validation, returns keyAuthorization = token || '.' || base64url(Thumbprint(accountKey))"""
-        # remove whitespace and line breaks from jwk
-        jwk_json = json.dumps(jwk)
-        jwk_compact = jwk_json.replace(' ', '').replace('\n', '').encode('utf-8')
-        h = hashlib.sha256()
-        h.update(jwk_compact)
-        return token + '.' + base64_encode(h.digest())
+    def acme_server_post_request(self, payload, url, print_debug=False, jwk=None, kid=None):  # TODO: remove debug param
+        jose_header = jose.get_header(self.nonce, url, jwk=jwk, kid=kid)
+        jwt = jose.json_web_token(jose_header, payload, self.pk)
+        r = requests.post(url=url, headers={"Content-Type": "application/jose+json"}, data=jwt,
+                          verify='pebble.minica.pem')
+        if print_debug:
+            print("jose_header: ", jose_header)
+            print("jwt: ", jwt)
+            print("r: ", r.text)
+        check_code_status(r)
+        self.nonce = r.headers.get("Replay-Nonce")
+        return r
 
     def dns_challenge(self):
         self.dns_server.stop()
         for c in self.challenges:
-            key_authorization = self.get_key_authorization(c['token'], self.jwk_dict)
+            key_authorization = get_key_authorization(c['token'], self.jwk_dict)
             # making challenge
-            TTL = 300  # TODO: dns periodical record update set to 5min (large upper bound)
+            TTL = 300
             key_hash = hashlib.sha256()
             key_hash.update(key_authorization.encode('utf-8'))
             base64_digest = base64_encode(key_hash.digest())
             zone = " " + str(TTL) + " IN TXT " + base64_digest
-            dns = DNS(zone, self.domains)
-            dns_server = DNSServer(dns, self.record_address, port=10053)
-            dns_server.start_thread()
+            challenge_dns_server = self.launch_dns([zone, self.default_dns_zone])
 
             # validation request
-            jose_header = jose.get_header(self.nonce, c['chal_url'], kid=self.kid)
-            jwt = jose.json_web_token(jose_header, {}, self.pk)
-            r = requests.post(url=c['chal_url'], headers={"Content-Type": "application/jose+json"}, data=jwt,
-                              verify='pebble.minica.pem')
-            self.check_code_status(r)
-            self.nonce = r.headers.get("Replay-Nonce")
+            self.acme_server_post_request({}, c['chal_url'], kid=self.kid)
 
             # server polling
             self.polling(c['auth_url'], "")
 
             # stop dns server for dns challenge, restart default one
-            dns_server.stop()
+            challenge_dns_server.stop()
         self.dns_server.start_thread()
 
     def http_challenge(self):
         """ For all http challenges, make it and validate it."""
         for c in self.challenges:
-            key_authorization = self.get_key_authorization(c['token'], self.jwk_dict)
+            key_authorization = get_key_authorization(c['token'], self.jwk_dict)
             # making challenge
             http_server = HttpServer(c['token'], key_authorization, self.record_address)
             http_server.start()
 
             # validation request
-            jose_header = jose.get_header(self.nonce, c['chal_url'], kid=self.kid)
-            jwt = jose.json_web_token(jose_header, {}, self.pk)
-            r = requests.post(url=c['chal_url'], headers={"Content-Type": "application/jose+json"}, data=jwt,
-                              verify='pebble.minica.pem')
-            self.check_code_status(r)
-            self.nonce = r.headers.get("Replay-Nonce")
+            self.acme_server_post_request({}, c['chal_url'], kid=self.kid)
 
             # server polling
             self.polling(c['auth_url'], "")
@@ -169,21 +173,11 @@ class AcmeClient:
     def polling(self, url, payload):
         status = ""
         while status != "valid":
-            jose_header = jose.get_header(self.nonce, url, kid=self.kid)
-            jwt = jose.json_web_token(jose_header, payload, self.pk)
-            r = requests.post(url=url, headers={"Content-Type": "application/jose+json"}, data=jwt,
-                              verify='pebble.minica.pem')
-
-            print("polling jose header: ", jose_header)
-            print("polling jwt: ", jwt)
-            print("polling r: ", r.text)
-
-            self.check_code_status(r)
-            self.nonce = r.headers.get("Replay-Nonce")
+            r = self.acme_server_post_request(payload, url, kid=self.kid)
             r_json = r.json()
             status = r_json["status"]
             if status == "invalid":
-                print("POLLING: invalid validation status")  # TODO: handle invalid status
+                print("POLLING: invalid validation status")
                 break
             time.sleep(3)  # sleep for 3 secs before polling again
         return r_json
@@ -192,15 +186,8 @@ class AcmeClient:
         """Get challenge from the server to prove control of the domain
                 for which the certificate is ordered."""
         payload = ""
-        self.challenges = []
         for url in self.authorizations_url:
-            jose_header = jose.get_header(self.nonce, url, kid=self.kid)
-            jwt = jose.json_web_token(jose_header, payload, self.pk)
-            r = requests.post(url=url, headers={"Content-Type": "application/jose+json"}, data=jwt,
-                              verify='pebble.minica.pem')
-
-            self.check_code_status(r)
-            self.nonce = r.headers.get("Replay-Nonce")
+            r = self.acme_server_post_request(payload, url, kid=self.kid)
             r_json = r.json()
             if self.challenge_type == Challenge.http:
                 for challenge in r_json["challenges"]:
@@ -225,12 +212,7 @@ class AcmeClient:
         """Submit an order for a certificate to be issued by the server."""
 
         payload = {"identifiers": [{"type": "dns", "value": d} for d in self.domains]}
-        jose_header = jose.get_header(self.nonce, self.new_order_url, kid=self.kid)
-        jwt = jose.json_web_token(jose_header, payload, self.pk)
-        r = requests.post(url=self.new_order_url, headers={"Content-Type": "application/jose+json"}, data=jwt,
-                          verify='pebble.minica.pem')
-        self.check_code_status(r)
-        self.nonce = r.headers.get("Replay-Nonce")
+        r = self.acme_server_post_request(payload, self.new_order_url, kid=self.kid)
         r_json = r.json()
         self.authorizations_url = r_json["authorizations"]
         self.finalize_url = r_json["finalize"]
@@ -243,13 +225,7 @@ class AcmeClient:
                that can download it."""
         csr = jose.get_csr(self.domains)
         payload = {'csr': csr}
-        jose_header = jose.get_header(self.nonce, self.finalize_url, kid=self.kid)
-        jwt = jose.json_web_token(jose_header, payload, self.pk)
-        r = requests.post(url=self.finalize_url, headers={"Content-Type": "application/jose+json"}, data=jwt,
-                          verify='pebble.minica.pem')
-
-        self.check_code_status(r)
-        self.nonce = r.headers.get("Replay-Nonce")
+        self.acme_server_post_request(payload, self.finalize_url, kid=self.kid)
         r_json = self.polling(self.order_url, "")
         self.cert_url = r_json["certificate"]
 
@@ -257,12 +233,7 @@ class AcmeClient:
         """Download the certificate from the server and install it on the
         HTTPS server."""
         payload = ""
-        jose_header = jose.get_header(self.nonce, self.cert_url, kid=self.kid)
-        jwt = jose.json_web_token(jose_header, payload, self.pk)
-        r = requests.post(url=self.cert_url, headers={"Content-Type": "application/jose+json"}, data=jwt,
-                          verify='pebble.minica.pem')
-        self.check_code_status(r)
-        self.nonce = r.headers.get("Replay-Nonce")
+        r = self.acme_server_post_request(payload, self.cert_url, kid=self.kid)
         self.certificate = r.text
         jose.write_pem_cert(self.certificate)
         if self.revoke:
@@ -272,9 +243,4 @@ class AcmeClient:
     def revoke_certificate(self, certificate):
         cert_der = base64_encode(jose.cert_der(certificate))
         payload = {"certificate": cert_der}
-        jose_header = jose.get_header(self.nonce, self.rev_cert_url, kid=self.kid)
-        jwt = jose.json_web_token(jose_header, payload, self.pk)
-        r = requests.post(url=self.rev_cert_url, headers={"Content-Type": "application/jose+json"}, data=jwt,
-                          verify='pebble.minica.pem')
-        self.check_code_status(r)
-        self.nonce = r.headers.get("Replay-Nonce")
+        self.acme_server_post_request(payload, self.rev_cert_url, kid=self.kid)

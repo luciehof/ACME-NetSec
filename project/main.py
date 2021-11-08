@@ -1,4 +1,3 @@
-import getopt
 import sys
 from typing import List
 

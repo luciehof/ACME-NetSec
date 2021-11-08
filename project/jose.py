@@ -1,12 +1,12 @@
 import base64
+import hashlib
 import math
-import sys
 from typing import List
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, utils, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 import json
 
@@ -14,6 +14,7 @@ import json
 # JSON Object Signing and Encryption implemented with ECDSA algorithm.
 ##
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from cryptography.x509 import NameOID
 
 
@@ -41,7 +42,7 @@ def json_web_token(header, payload, pk: EllipticCurvePrivateKey):
     signing_input = base64url_header + '.' + base64url_payload
     utf8_signature = pk.sign(signing_input.encode('utf-8'), ec.ECDSA(hashes.SHA256()))
     PK = pk.public_key()
-    assert PK.verify(utf8_signature, signing_input.encode('utf-8'), ec.ECDSA(hashes.SHA256())) == None
+    assert PK.verify(utf8_signature, signing_input.encode('utf-8'), ec.ECDSA(hashes.SHA256())) is None
     r, s = decode_dss_signature(utf8_signature)
     r_bytes = r.to_bytes(math.ceil(r.bit_length() / 8), 'big')
     s_bytes = s.to_bytes(math.ceil(s.bit_length() / 8), 'big')
@@ -51,7 +52,7 @@ def json_web_token(header, payload, pk: EllipticCurvePrivateKey):
                 "payload": base64url_payload,
                 "signature": base64url_signature}
 
-    return json.dumps(jwt_dict).encode("utf8")  # signing_input + '.' + base64url_signature
+    return json.dumps(jwt_dict).encode("utf8")
 
 
 def get_header(nonce: str, url: str, jwk: dict = None, kid: str = None):
@@ -66,17 +67,17 @@ def get_header(nonce: str, url: str, jwk: dict = None, kid: str = None):
 def get_csr(domains: List):
     cert_pk = rsa.generate_private_key(backend=default_backend(), public_exponent=65537, key_size=2048)
     with open("cert_pk.pem", "wb") as f:
-        f.write(cert_pk.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.PKCS8,
+        f.write(cert_pk.private_bytes(encoding=Encoding.PEM, format=PrivateFormat.PKCS8,
                                       encryption_algorithm=serialization.NoEncryption()))
         f.close()
 
     csr_builder = x509.CertificateSigningRequestBuilder().subject_name(
         x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domains[0])])).add_extension(
         x509.SubjectAlternativeName([x509.DNSName(domain) for domain in domains]), critical=False)
+
     csr = csr_builder.sign(cert_pk, hashes.SHA256(), default_backend())
-    csr_der = csr.public_bytes(serialization.Encoding.DER)
-    csr_b64 = base64_encode(csr_der)
-    return csr_b64
+    csr_der = csr.public_bytes(Encoding.DER)
+    return base64_encode(csr_der)
 
 
 def write_pem_cert(certificate: str):
@@ -87,5 +88,14 @@ def write_pem_cert(certificate: str):
 
 def cert_der(certificate):
     cert_enc = x509.load_pem_x509_certificate(certificate.encode(), default_backend())
-    cert_der = cert_enc.public_bytes(serialization.Encoding.DER)
-    return cert_der
+    return cert_enc.public_bytes(Encoding.DER)
+
+
+def get_key_authorization(token, jwk: dict):
+    """For challenge validation, returns keyAuthorization = token || '.' || base64url(Thumbprint(accountKey))"""
+    # remove whitespace and line breaks from jwk
+    jwk_json = json.dumps(jwk)
+    jwk_compact = jwk_json.replace(' ', '').replace('\n', '').encode('utf-8')
+    h = hashlib.sha256()
+    h.update(jwk_compact)
+    return token + '.' + base64_encode(h.digest())

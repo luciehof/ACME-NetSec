@@ -5,13 +5,14 @@ from dnslib.server import BaseResolver
 
 
 class DNS(BaseResolver):
-    def __init__(self, zone, domains):
-        self.zone = zone  # e.g. corresponds to " TTL IN A 1.2.3.4" in "abc.com TTL IN A 1.2.3.4"
+    def __init__(self, zones, domains):
+        self.zones = zones  # e.g. corresponds to " TTL IN A 1.2.3.4" in "abc.com TTL IN A 1.2.3.4"
         self.domains = domains
 
     def resolve(self, request, handler):
         reply = request.reply()
         for d in self.domains:
-            zone = d + self.zone
-            reply.add_answer(*RR.fromZone(zone))
+            for z in self.zones:
+                zone = d + z
+                reply.add_answer(*RR.fromZone(zone))
         return reply
