@@ -49,7 +49,6 @@ class AcmeClient:
         self.order_url = None
         self.cert_url = None
         self.server_certificate_validity = self.get_server_directory()
-        self.dns_server = None
         self.nonce = None
         self.jwk_dict = None
         self.kid = None

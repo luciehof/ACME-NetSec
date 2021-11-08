@@ -9,12 +9,11 @@ class ShutdownServer(Process):
         self.app = Flask(__name__)
         self.record_address = record_address
 
-
     def run(self):
         @self.app.route('/shutdown')
         def shutdown():
             print("Shutting down acme application...")
             request.environ.get('werkzeug.server.shutdown')
             return "Server shutting down..."
-        self.app.run(host=self.record_address, port=5003)
 
+        self.app.run(host=self.record_address, port=5003)

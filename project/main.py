@@ -12,13 +12,13 @@ IPV4_ADDRESS = ""
 REVOKE = False
 
 args = sys.argv[2:]
-for i in range (0, len(args), 2):
+for i in range(0, len(args), 2):
     if args[i] == "--dir":
-        DIR_URL = args[i+1]
+        DIR_URL = args[i + 1]
     elif args[i] == "--record":
-        IPV4_ADDRESS = args[i+1]
+        IPV4_ADDRESS = args[i + 1]
     elif args[i] == "--domain":
-        DOMAINS.append(args[i+1])
+        DOMAINS.append(args[i + 1])
     elif args[i] == "--revoke":
         REVOKE = True
 
@@ -66,7 +66,6 @@ if server_certificate_validity == 0:
     print("Https server up with new certificate, shutdown server starting...")
 else:
     print("Acme server certificate is invalid. Starting shutdown server...")
-
 
 shutdown_server = ShutdownServer(IPV4_ADDRESS)
 shutdown_server.start()
