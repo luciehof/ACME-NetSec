@@ -47,7 +47,7 @@ if server_certificate_validity == 0:
     print("CSR done.")
     print("-----------------------------")
     print("Validating challenges...")
-    acme_client.validate_challenges()
+    acme_client.validate_challenges() #TODO: validate challenges for each domain name independently!!!
     print("Challenges done.")
     print("-----------------------------")
     print("Finalizing certificate order...")
@@ -73,3 +73,4 @@ shutdown_server.start()
 if server_certificate_validity == 0:
     https_server.terminate()
     https_server.join()
+    acme_client.dns_server.stop()
