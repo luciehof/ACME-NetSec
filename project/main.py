@@ -1,4 +1,5 @@
 import sys
+import time
 from typing import List
 
 from acme_client import AcmeClient, Challenge
@@ -69,5 +70,11 @@ if server_certificate_validity == 0:
 else:
     print("Acme server certificate is invalid. Starting shutdown server...")
 
-shutdown_server = ShutdownServer(IPV4_ADDRESS, https_server, acme_client.dns_server)
+shutdown_server = ShutdownServer(IPV4_ADDRESS)
 shutdown_server.start()
+
+if server_certificate_validity == 0:
+    time.sleep(1)
+    https_server.terminate()
+    https_server.join()
+    acme_client.dns_server.stop()
