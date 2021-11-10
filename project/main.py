@@ -34,6 +34,8 @@ if CHALLENGE_TYPE == 'dns01':
 else:
     challenge_type = Challenge.http
 
+https_server = None
+
 acme_client = AcmeClient(DIR_URL, DOMAINS, challenge_type, IPV4_ADDRESS, REVOKE)
 print("-----------------------------")
 print("Setting up account with Acme server...")
@@ -47,7 +49,7 @@ if server_certificate_validity == 0:
     print("CSR done.")
     print("-----------------------------")
     print("Validating challenges...")
-    acme_client.validate_challenges() #TODO: validate challenges for each domain name independently!!!
+    acme_client.validate_challenges()  # TODO: validate challenges for each domain name independently???
     print("Challenges done.")
     print("-----------------------------")
     print("Finalizing certificate order...")
@@ -67,10 +69,5 @@ if server_certificate_validity == 0:
 else:
     print("Acme server certificate is invalid. Starting shutdown server...")
 
-shutdown_server = ShutdownServer(IPV4_ADDRESS)
+shutdown_server = ShutdownServer(IPV4_ADDRESS, https_server, acme_client.dns_server)
 shutdown_server.start()
-
-if server_certificate_validity == 0:
-    https_server.terminate()
-    https_server.join()
-    acme_client.dns_server.stop()
