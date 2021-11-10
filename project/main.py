@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 from typing import List
@@ -74,7 +75,7 @@ shutdown_server = ShutdownServer(IPV4_ADDRESS)
 shutdown_server.start()
 
 if server_certificate_validity == 0:
-    time.sleep(1)
+    os.wait()#time.sleep(1)
     https_server.terminate()
     https_server.join()
     acme_client.dns_server.stop()
